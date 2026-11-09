@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EXIM Insight &amp; Q&amp;A Bot &middot; H.G. Hawa &amp; Co.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <!-- ===================== Header ===================== -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">HG</div>
+      <div class="brand-text">
+        <div class="brand-title">EXIM Insight &amp; Q&amp;A Bot</div>
+        <div class="brand-sub">H.G. Hawa &amp; Co. &middot; Paper &amp; Packaging trade intelligence</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="units">
+        <label>Value in</label>
+        <select id="unitSelect">
+          <option value="USD">USD</option>
+          <option value="INR">INR</option>
+        </select>
+        <input id="fxRate" type="number" step="0.01" min="0" value="88.5" title="INR per USD" />
+      </div>
+      <span id="llmBadge" class="badge badge-muted" title="Free-form question fallback">AI&nbsp;SQL: off</span>
+      <button id="newFileBtn" class="btn btn-ghost" hidden>Load another file</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===================== Upload (empty state) ===================== -->
+    <section id="uploadView" class="upload-view">
+      <div class="drop" id="dropzone">
+        <div class="drop-icon">&#128229;</div>
+        <h1>Drop your EXIM trade report(s)</h1>
+        <p>Upload an EXIM shipment ledger (<b>.xlsx</b>, <b>.xls</b> or <b>.csv</b>) &mdash;
+           or <b>select several months together</b> to track the last 3 months in one view.
+           The bot reads them, auto-builds the insight dashboard, and then answers any
+           question about the data &mdash; straight from the rows, never guessed.</p>
+        <label class="btn btn-primary btn-lg">
+          Choose file(s)
+          <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" multiple hidden />
+        </label>
+        <div class="drop-hint">or drag &amp; drop one or more files here</div>
+        <div class="assurance">
+          <span>&#128274; Runs locally</span>
+          <span>&#9989; Every number traceable to rows</span>
+          <span>&#128269; No data leaves your machine</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Loading ===================== -->
+    <section id="loadingView" class="loading-view" hidden>
+      <div class="spinner"></div>
+      <h2 id="loadingTitle">Reading your EXIM file&hellip;</h2>
+      <p id="loadingStep">Locking headers &middot; cleaning &middot; deriving grade/GSM &middot; building the database</p>
+    </section>
+
+    <!-- ===================== Workspace ===================== -->
+    <section id="workspace" class="workspace" hidden>
+
+      <!-- summary ribbon -->
+      <div class="ribbon" id="ribbon"></div>
+
+      <!-- honest flags -->
+      <details class="flags" id="flagsBox">
+        <summary>Data quality &amp; honest flags</summary>
+        <div id="flagsBody" class="flags-body"></div>
+      </details>
+
+      <div class="grid">
+        <!-- left: dashboard -->
+        <div class="col-dash">
+          <div class="section-head">
+            <h2>Part A &middot; Auto-Insight</h2>
+            <span class="muted">Generated on load. Click any tile to see the rows behind it.</span>
+          </div>
+          <div id="tiles" class="tiles"></div>
+        </div>
+
+        <!-- right: chat -->
+        <aside class="col-chat">
+          <div class="section-head">
+            <h2>Part B &middot; Ask Anything</h2>
+            <span class="muted">Plain English or Hinglish. Exact answers from the data.</span>
+          </div>
+
+          <div id="chatlog" class="chatlog"></div>
+
+          <div class="suggest" id="suggestChips"></div>
+
+          <form id="askForm" class="askbar" autocomplete="off">
+            <input id="askInput" type="text"
+                   placeholder="e.g. Top 5 buyers by value, or: Nine Dragons se kaun khareed raha hai?" />
+            <button type="submit" class="btn btn-primary" id="askBtn">Ask</button>
+          </form>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== Rows modal ===================== -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="modalTitle">Rows</h3>
+        <div class="modal-actions">
+          <button id="modalExport" class="btn btn-ghost btn-sm">Export CSV</button>
+          <button id="modalClose" class="btn btn-ghost btn-sm">Close</button>
+        </div>
+      </div>
+      <div id="modalSql" class="modal-sql"></div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    EXIM Insight &amp; Q&amp;A Bot &middot; v1.0 &middot; H.G. Hawa &amp; Co. &middot;
+    Confidential &mdash; the data lives in the bot&rsquo;s head; you simply ask.
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

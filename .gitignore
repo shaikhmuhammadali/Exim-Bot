@@ -1,0 +1,14 @@
+# Generated at runtime -- user data & databases stay local, never committed
+uploads/*
+!uploads/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini

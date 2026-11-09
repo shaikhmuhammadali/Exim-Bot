@@ -1,0 +1,10 @@
+# EXIM Insight & Q&A Bot -- H.G. Hawa & Co.
+# Core (required):
+flask>=3.0
+pandas>=2.0
+openpyxl>=3.1
+numpy>=1.24
+# Reading legacy .xls files:
+xlrd>=2.0
+# Optional -- only needed to enable the free-form (Claude-backed) Q&A fallback:
+# anthropic>=0.39
