@@ -205,8 +205,13 @@ class EntityIndex:
         for c in self.countries:
             if c and c.lower() == t:
                 return c
+        # word-boundary containment only (so 'many' does NOT match 'Germany')
+        tset = set(t.split())
         for c in self.countries:
-            if c and (t in c.lower() or c.lower() in t):
+            if not c:
+                continue
+            cl = c.lower()
+            if cl in t or t in cl.split() or set(cl.split()) <= tset:
                 return c
         close = difflib.get_close_matches(t, [c.lower() for c in self.countries], n=1, cutoff=0.7)
         if close:
@@ -565,6 +570,100 @@ class Engine:
                       "params": [name]},
         )
 
+    def h_aggregate(self, q, raw) -> Optional[Answer]:
+        """Overall aggregate / count / overview questions that want ONE figure
+        or a small stat block -- e.g. 'total value?', 'how many buyers?',
+        'average rate?', 'date range?', 'give me an overview'. Runs before the
+        ranking engine so these don't get turned into a top-N list."""
+
+        def stat(expr):
+            return self._run(f"SELECT {expr} AS v FROM {TABLE}")[0]["v"]
+
+        def one(metric, value, fmt, note=""):
+            return Answer(ok=True, kind="table", title=metric,
+                          columns=[("metric", "Metric"), ("v", "Value")],
+                          rows=[{"metric": metric, "v": value, "fmt": fmt}],
+                          note=note,
+                          sql=f"SELECT ... FROM {TABLE}",
+                          evidence={"sql": f"SELECT {EVID} FROM {TABLE} ORDER BY value_usd DESC",
+                                    "params": []})
+
+        # ---- distinct counts ----
+        count_defs = [
+            (r"\bhow many (?:unique |distinct )?(?:buyers|importers|customers|consignees)\b|number of (?:buyers|importers)|total (?:buyers|importers)|count of buyers",
+             "COUNT(DISTINCT buyer_key)", "Unique buyers"),
+            (r"\bhow many (?:unique |distinct )?(?:suppliers|sellers|exporters|vendors|shippers)\b|number of (?:suppliers|sellers)|total (?:suppliers|sellers)",
+             "COUNT(DISTINCT seller_key)", "Unique suppliers"),
+            (r"\bhow many (?:shipments|records|rows|transactions|deals|entries)\b|number of shipments|total shipments|total records",
+             "COUNT(*)", "Shipments"),
+            (r"\bhow many (?:grades)\b|number of grades",
+             "COUNT(DISTINCT grade_derived)", "Grades (derived)"),
+            (r"\bhow many (?:ports)\b|number of ports",
+             "COUNT(DISTINCT destination_port)", "Destination ports"),
+            (r"\bhow many (?:lanes|routes|corridors)\b|number of lanes",
+             "COUNT(DISTINCT trade_lane)", "Trade lanes"),
+            (r"\bhow many (?:months|periods)\b|number of months",
+             "COUNT(DISTINCT year_month)", "Months covered"),
+            (r"\bhow many (?:hs ?codes?|hsn)\b|number of hs ?codes?",
+             "COUNT(DISTINCT hs4)", "HS codes (4-digit)"),
+        ]
+        for pat, expr, label in count_defs:
+            if re.search(pat, q):
+                return one(label, stat(expr), "int")
+
+        # "how many countries"
+        if re.search(r"\bhow many countr|number of countr", q):
+            bc = stat("COUNT(DISTINCT buyer_country)")
+            sc = stat("COUNT(DISTINCT seller_country)")
+            return Answer(ok=True, kind="table", title="Countries covered",
+                          columns=[("metric", "Metric"), ("v", "Value")],
+                          rows=[{"metric": "Buyer (destination) countries", "v": bc, "fmt": "int"},
+                                {"metric": "Seller (origin) countries", "v": sc, "fmt": "int"}],
+                          evidence={"sql": f"SELECT {EVID} FROM {TABLE} ORDER BY value_usd DESC", "params": []})
+
+        # ---- grand totals ----
+        if re.search(r"\b(total|overall|grand total|sum of|aggregate) (?:value|worth|usd|amount)\b|total value|overall value|grand total", q):
+            return one("Total value (USD)", stat("COALESCE(SUM(value_usd),0)"), "usd")
+        if re.search(r"\b(total|overall) (?:quantity|volume|qty)\b|total quantity|total volume", q):
+            return one("Total quantity", stat("COALESCE(SUM(quantity),0)"), "qty")
+
+        # ---- overall average rate (no entity in the question) ----
+        if re.search(r"\b(average|avg|mean|overall average) (?:unit )?(?:rate|price)\b", q) \
+                and not self._guess_company(q, raw, strict=True)[1]:
+            return one("Average unit price", stat("AVG(CASE WHEN unit_price>0 THEN unit_price END)"),
+                       "usd4", note="Average across all priced shipments.")
+
+        # ---- date range / period ----
+        if re.search(r"\b(date range|time ?frame|what period|period cover|coverage|date span|how many days|from when|span of)\b", q):
+            lo = stat("MIN(date)"); hi = stat("MAX(date)"); m = stat("COUNT(DISTINCT year_month)")
+            return Answer(ok=True, kind="scalar", title="Date range covered",
+                          scalar=f"{lo} → {hi}",
+                          note=f"{lo} to {hi} · {m} month(s) in the file.",
+                          evidence={"sql": f"SELECT {EVID} FROM {TABLE} ORDER BY date", "params": []})
+
+        # ---- overview / summary / key numbers ----
+        if re.search(r"\b(overview|summary|headline|key numbers|key figures|snapshot|highlights|at a glance|give me insights?|the numbers)\b", q) \
+                and not self._guess_company(q, raw, strict=True)[1]:
+            r = self._run(f"""SELECT COUNT(*) AS shipments,
+                   COALESCE(SUM(quantity),0) AS qty, COALESCE(SUM(value_usd),0) AS value,
+                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price,
+                   COUNT(DISTINCT buyer_key) AS buyers, COUNT(DISTINCT seller_key) AS sellers,
+                   MIN(date) AS lo, MAX(date) AS hi FROM {TABLE}""")[0]
+            rows = [
+                {"metric": "Shipments", "v": r["shipments"], "fmt": "int"},
+                {"metric": "Total quantity", "v": r["qty"], "fmt": "qty"},
+                {"metric": "Total value (USD)", "v": r["value"], "fmt": "usd"},
+                {"metric": "Average unit price", "v": r["avg_price"], "fmt": "usd4"},
+                {"metric": "Unique buyers", "v": r["buyers"], "fmt": "int"},
+                {"metric": "Unique suppliers", "v": r["sellers"], "fmt": "int"},
+                {"metric": "Date range", "v": f"{r['lo']} → {r['hi']}", "fmt": "text"},
+            ]
+            return Answer(ok=True, kind="table", title="Overview — key numbers",
+                          columns=[("metric", "Metric"), ("v", "Value")], rows=rows,
+                          evidence={"sql": f"SELECT {EVID} FROM {TABLE} ORDER BY value_usd DESC", "params": []})
+
+        return None
+
     # ---- dimension vocabulary for the universal builder ----
     # (regex, (display_col, group_col, label, country_col_or_None))
     DIMENSIONS = [
@@ -769,9 +868,9 @@ class Engine:
     # Order matters: country-lane questions ("importers from <country>") must be
     # tried before the company resolver, so a country name is never mistaken for
     # a company that merely contains that word.
-    HANDLERS = ["h_top_entities", "h_lane_filter", "h_who_trades_with",
-                "h_cheapest_highest", "h_frequency", "h_company_summary",
-                "h_universal"]
+    HANDLERS = ["h_aggregate", "h_top_entities", "h_lane_filter",
+                "h_who_trades_with", "h_cheapest_highest", "h_frequency",
+                "h_company_summary", "h_universal"]
 
     def answer(self, question: str) -> Answer:
         raw = question.strip()
