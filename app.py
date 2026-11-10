@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import io
 import csv
+import gc
 import json
 import time
 import uuid
@@ -168,8 +169,14 @@ def build_dataset_from_paths(named_paths, source="manual") -> Dataset:
 
     combined = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     quality = quality_report(combined, has_rodtep=has_rodtep, has_drawback=has_drawback)
+    total_rows = len(combined)
     db_path = os.path.join(UPLOAD_DIR, f"{ds_id}.db")
     build_database(combined, db_path)
+    # free the big in-memory frames before building the dashboard -- keeps the
+    # peak memory low enough for small (512MB) cloud instances.
+    del frames[:]
+    del combined
+    gc.collect()
     dash = build_dashboard(db_path)
     elapsed = round(time.time() - t0, 1)
 
@@ -180,7 +187,7 @@ def build_dataset_from_paths(named_paths, source="manual") -> Dataset:
         "id": ds_id, "source_name": label, "source": source,
         "auto": source == "auto",
         "files": per_file, "file_count": len(per_file),
-        "total_rows": len(combined),
+        "total_rows": total_rows,
         "periods": quality.get("periods", []),
         "period_count": quality.get("period_count", 0),
         "recognised_fields": sorted(recognised),

@@ -65,7 +65,16 @@
     const fd = new FormData(); files.forEach(f => fd.append("file", f));
     try {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
-      const j = await r.json();
+      let j;
+      try { j = await r.json(); }
+      catch (_) {
+        // server returned HTML (e.g. a 502/413 from the host), not JSON
+        if (r.status === 413) alert("That file is too large for the server.");
+        else alert("The server couldn't process that file.\n\n" +
+          "On the free cloud plan this usually means it ran out of memory on a very large file. " +
+          "Try a smaller file (e.g. one month), or use the local app which has no size limit.");
+        show("upload"); return;
+      }
       if (!j.ok) { alert("Could not load the file:\n\n" + (j.error || "Unknown error")); show("upload"); return; }
       state.dashboard = j.dashboard;
       renderWorkspace(j.summary, j.quality, j.dashboard);

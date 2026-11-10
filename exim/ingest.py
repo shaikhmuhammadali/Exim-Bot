@@ -142,18 +142,51 @@ def _read_raw(path: str) -> pd.DataFrame:
     if ext == ".xls":
         return pd.read_excel(path, header=None, dtype=str, engine="xlrd")
 
-    # .xlsx (default): try straight, then repair, then read_only fallback.
-    try:
-        return pd.read_excel(path, header=None, dtype=str, engine="openpyxl")
-    except Exception:
-        repaired = _repair_xlsx_to_tempfile(path)
+    # .xlsx -- stream with openpyxl read_only (much lower peak memory than
+    # pd.read_excel, which matters on small cloud instances). Repair the broken
+    # stylesheet first if needed. Fall back to pandas only if streaming fails.
+    for p in (path, None):
+        rp = p if p is not None else _repair_xlsx_to_tempfile(path)
         try:
-            return pd.read_excel(repaired, header=None, dtype=str, engine="openpyxl")
+            df = _read_xlsx_stream(rp)
+            if df is not None:
+                return df
+        except Exception:
+            pass
         finally:
-            try:
-                os.remove(repaired)
-            except OSError:
-                pass
+            if p is None:
+                try: os.remove(rp)
+                except OSError: pass
+    # last resort: full pandas load (repaired)
+    repaired = _repair_xlsx_to_tempfile(path)
+    try:
+        return pd.read_excel(repaired, header=None, dtype=str, engine="openpyxl")
+    finally:
+        try: os.remove(repaired)
+        except OSError: pass
+
+
+def _read_xlsx_stream(path: str):
+    """Low-memory .xlsx reader: openpyxl read_only streaming into a DataFrame of
+    strings. Holds one row at a time while reading (no full workbook graph)."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws = wb[wb.sheetnames[0]]
+        rows = []
+        maxc = 0
+        for r in ws.iter_rows(values_only=True):
+            row = ["" if v is None else str(v) for v in r]
+            maxc = max(maxc, len(row))
+            rows.append(row)
+    finally:
+        wb.close()
+    if not rows:
+        return None
+    for r in rows:                      # pad ragged rows
+        if len(r) < maxc:
+            r.extend([""] * (maxc - len(r)))
+    return pd.DataFrame(rows, dtype=object)
 
 
 def _score_header_row(cells: list[str]) -> tuple[int, dict[int, str]]:
