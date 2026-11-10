@@ -28,7 +28,9 @@
         </select>
         <input id="fxRate" type="number" step="0.01" min="0" value="88.5" title="INR per USD" />
       </div>
+      <span id="autoBadge" class="badge badge-muted" title="Auto-load from watched folder" hidden>Auto</span>
       <span id="llmBadge" class="badge badge-muted" title="Free-form question fallback">AI&nbsp;SQL: off</span>
+      <button id="refreshBtn" class="btn btn-ghost" hidden title="Re-check the watched folder for a newer report">&#8635; Refresh data</button>
       <button id="newFileBtn" class="btn btn-ghost" hidden>Load another file</button>
     </div>
   </header>
@@ -48,6 +50,7 @@
           <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" multiple hidden />
         </label>
         <div class="drop-hint">or drag &amp; drop one or more files here</div>
+        <div class="drop-hint" style="margin-top:6px">&#8635; Auto-load is on: drop a new EXIM report in your Downloads folder and the bot picks it up by itself.</div>
         <div class="assurance">
           <span>&#128274; Runs locally</span>
           <span>&#9989; Every number traceable to rows</span>
@@ -61,6 +64,7 @@
       <div class="spinner"></div>
       <h2 id="loadingTitle">Reading your EXIM file&hellip;</h2>
       <p id="loadingStep">Locking headers &middot; cleaning &middot; deriving grade/GSM &middot; building the database</p>
+      <p id="loadingAuto" class="muted" style="margin-top:10px"></p>
     </section>
 
     <!-- ===================== Workspace ===================== -->

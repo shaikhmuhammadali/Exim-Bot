@@ -414,16 +414,56 @@
     tbl.appendChild(tb); return tbl;
   }
 
+  // -------------------- auto-load UI --------------------
+  function setupAuto(auto) {
+    if (!auto) return;
+    const badge = $("#autoBadge"), rbtn = $("#refreshBtn");
+    if (auto.enabled) {
+      badge.hidden = false;
+      badge.textContent = "Auto · watching folder";
+      badge.className = "badge badge-on";
+      badge.title = "Auto-loading the latest EXIM report from: " + (auto.folder || "");
+      rbtn.hidden = false;
+    } else { badge.hidden = true; rbtn.hidden = true; }
+  }
+  $("#refreshBtn").addEventListener("click", refreshData);
+  async function refreshData() {
+    show("loading");
+    $("#loadingTitle").textContent = "Re-checking for the latest EXIM report…";
+    $("#loadingAuto").textContent = "";
+    try {
+      const j = await (await fetch("/api/refresh", { method: "POST" })).json();
+      if (j.ok) { state.dashboard = j.dashboard; renderWorkspace(j.summary, j.quality, j.dashboard); setupAuto(j.auto); show("work"); }
+      else { alert(j.error || "Refresh failed."); show(lastSummary ? "work" : "upload"); }
+    } catch (e) { alert("Refresh failed: " + e); show(lastSummary ? "work" : "upload"); }
+  }
+
   // -------------------- boot --------------------
   async function boot() {
     try {
       const h = await (await fetch("/api/health")).json();
       if (h.llm) { const b = $("#llmBadge"); b.textContent = "AI SQL: on"; b.className = "badge badge-on"; }
+      setupAuto(h.auto);
     } catch (e) {}
-    try {
-      const s = await (await fetch("/api/state")).json();
-      if (s.loaded) { state.dashboard = s.dashboard; renderWorkspace(s.summary, s.quality, s.dashboard); show("work"); return; }
-    } catch (e) {}
+
+    const s = await (await fetch("/api/state")).json().catch(() => ({}));
+    if (s.loaded) { state.dashboard = s.dashboard; renderWorkspace(s.summary, s.quality, s.dashboard); setupAuto(s.auto); show("work"); return; }
+
+    // Not loaded yet. If auto-load is enabled and working, wait for it.
+    const auto = s.auto || {};
+    if (auto.enabled && auto.status !== "no_files" && auto.status !== "error") {
+      show("loading");
+      $("#loadingTitle").textContent = "Auto-loading your latest EXIM report…";
+      $("#loadingAuto").textContent = "Watching " + (auto.folder || "your Downloads folder");
+      const deadline = Date.now() + 120000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 2500));
+        const st = await (await fetch("/api/state")).json().catch(() => ({}));
+        if (st.loaded) { state.dashboard = st.dashboard; renderWorkspace(st.summary, st.quality, st.dashboard); setupAuto(st.auto); show("work"); return; }
+        if (st.auto && st.auto.message) $("#loadingAuto").textContent = st.auto.message;
+        if (st.auto && (st.auto.status === "no_files" || st.auto.status === "error")) break;
+      }
+    }
     show("upload");
   }
   boot();
