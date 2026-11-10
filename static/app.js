@@ -195,9 +195,10 @@
     if (QTY_KEYS.has(key)) return num2(val);
     if (key === "shipments" || key === "purchases" || key === "distinct_days" || key === "active_days" || key === "counterparties" || key === "buyers" || key === "sellers") return num(val);
     if (key === "avg_gsm" || key === "gsm_derived") return val == null ? "—" : num(val);
+    if (key === "share") return val == null ? "—" : num2(val) + "%";
     return esc(val == null ? "—" : val);
   }
-  const NUMERIC = new Set([...CURR_KEYS, ...QTY_KEYS, "shipments", "purchases", "distinct_days", "active_days", "avg_gsm", "gsm_derived", "counterparties", "buyers", "sellers"]);
+  const NUMERIC = new Set([...CURR_KEYS, ...QTY_KEYS, "shipments", "purchases", "distinct_days", "active_days", "avg_gsm", "gsm_derived", "counterparties", "buyers", "sellers", "share"]);
 
   function rankTable(t) {
     const tbl = el("table", "mini");
@@ -291,17 +292,24 @@
   }
 
   // -------------------- chat --------------------
-  const SUGGESTIONS = [
-    "Top 5 buyers by value", "Top 10 suppliers by quantity",
-    "Top destination ports by volume", "Top trade lanes",
-    "Cheapest testliner 140 GSM", "Which importers bought from Vietnam?",
-  ];
+  const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"];
+  function monthLabel(ym) { const m = /^\d{4}-(\d{2})$/.exec(ym || ""); return m ? MONTH_NAMES[+m[1] - 1] : ym; }
+
   function initChat(summary) {
     const log = $("#chatlog");
     log.innerHTML = `<div class="empty-chat">Ask in plain English or Hinglish.<br>
       Every answer is run as a real query on your ${num(summary.total_rows)} rows — with the rows one click away.</div>`;
+    // base + advanced suggestions, period-aware
+    const sugg = ["Overview", "Top 5 buyers by value", "Top trade lanes",
+      "Cheapest testliner 140 GSM", "How many suppliers?"];
+    const p = (summary.periods || []);
+    if (p.length >= 2) {
+      sugg.splice(1, 0, `Compare ${monthLabel(p[p.length - 2])} and ${monthLabel(p[p.length - 1])}`);
+      sugg.splice(2, 0, `New buyers in ${monthLabel(p[p.length - 1])}`);
+    }
     const chips = $("#suggestChips"); chips.innerHTML = "";
-    SUGGESTIONS.forEach(s => { const c = el("div", "chip", esc(s)); c.addEventListener("click", () => { $("#askInput").value = s; doAsk(); }); chips.appendChild(c); });
+    sugg.forEach(s => { const c = el("div", "chip", esc(s)); c.addEventListener("click", () => { $("#askInput").value = s; doAsk(); }); chips.appendChild(c); });
   }
 
   $("#askForm").addEventListener("submit", e => { e.preventDefault(); doAsk(); });
@@ -396,9 +404,9 @@
       const tr = el("tr");
       tr.innerHTML = cols.map(([k], i) => {
         let cell;
-        if (k === "v" && row.fmt) { const f = FMT[row.fmt]; cell = row.fmt === "text" ? esc(row[k]) : (f ? f(row[k]) : esc(row[k])); }
+        if ((k === "v" || k === "a" || k === "b") && row.fmt) { const f = FMT[row.fmt]; cell = row.fmt === "text" ? esc(row[k]) : (f ? f(row[k]) : esc(row[k])); }
         else cell = cellFmt(k, row[k]);
-        const rightAlign = NUMERIC.has(k) || (k === "v" && row.fmt && row.fmt !== "text");
+        const rightAlign = NUMERIC.has(k) || ((k === "v" || k === "a" || k === "b") && row.fmt && row.fmt !== "text") || k === "chg";
         return `<td class="${rightAlign ? "num" : ""} ${i === 0 ? "name" : ""}">${cell}</td>`;
       }).join("");
       tb.appendChild(tr);

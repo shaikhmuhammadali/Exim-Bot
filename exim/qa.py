@@ -334,35 +334,67 @@ class Engine:
             dim = ("buyer_country", "buyer_country", "Buyer country", None)
         if not dim:
             return None
+        return self._build_ranking(dim, q)
 
+    def _build_ranking(self, dim, q, extra_where=None, extra_params=None, fdesc=None):
+        """Shared ranking builder used by the Top-N and universal handlers.
+        Adds a precise Share-% of the ranked metric (window function) so every
+        ranking shows concentration, and an average shipment size."""
         disp, group, label, country_col = dim
+        extra_where = list(extra_where or [])
+        extra_params = list(extra_params or [])
+        fdesc = fdesc or []
+        metric_sql, metric_label = _metric_col(q)
+        n = _extract_top_n(q, default=10)
+
+        # numerator for the share %, matched to the ranking metric
+        if "value_usd" in metric_sql:
+            num = "COALESCE(SUM(value_usd),0)"
+        elif metric_sql.startswith("COUNT"):
+            num = "COUNT(*)"
+        elif "quantity" in metric_sql:
+            num = "COALESCE(SUM(quantity),0)"
+        else:
+            num = None   # avg rate -> share not meaningful
+        share_sel = (f", ROUND(100.0*{num}/NULLIF(SUM({num}) OVER(),0),1) AS share"
+                     if num else "")
+
+        where = [f"{group} IS NOT NULL"] + extra_where
         extra = f", {country_col} AS country" if country_col else ""
-        country_grp = ""
         sql = f"""
             SELECT {disp} AS name{extra},
                    COUNT(*) AS shipments,
                    COALESCE(SUM(quantity),0) AS qty,
                    COALESCE(SUM(value_usd),0) AS value,
-                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price
+                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price{share_sel}
             FROM {TABLE}
-            WHERE {group} IS NOT NULL
+            WHERE {' AND '.join(where)}
             GROUP BY {group}
             ORDER BY {metric_sql} DESC
             LIMIT ?"""
-        rows = self._run(sql, (n,), limit=n)
+        rows = self._run(sql, extra_params + [n], limit=n)
+        if not rows:
+            return None
         cols = [("name", label)]
         if country_col:
             cols.append(("country", "Country"))
         cols += [("shipments", "Shipments"), ("qty", "Quantity"),
                  ("value", "Value (USD)"), ("avg_price", "Avg rate")]
-        ev_col = disp
+        if num:
+            cols.append(("share", "Share %"))
+        suffix = (" — " + ", ".join(fdesc)) if fdesc else ""
+        ev_where = " AND ".join(where[1:]) if len(where) > 1 else ""
+        ev_sql = (f"SELECT {EVID} FROM {TABLE} WHERE {disp}=?"
+                  + (f" AND {ev_where}" if ev_where else "") + " ORDER BY quantity DESC")
+        note = ("Grade/GSM are derived from product text (indicative)."
+                if (self.idx.match_grade(q) or _extract_gsm(q)
+                    or "grade" in label.lower() or "gsm" in label.lower()) else "")
         return Answer(
             ok=True, kind="table",
-            title=f"Top {n} {label.lower()}s by {metric_label.lower()}",
-            columns=cols, rows=rows,
-            sql=sql.strip(), params=[n],
-            evidence={"sql": f"SELECT {EVID} FROM {TABLE} WHERE {ev_col}=? ORDER BY quantity DESC",
-                      "params_from": "name"},
+            title=f"Top {n} {label.lower()}s by {metric_label.lower()}{suffix}",
+            note=note, columns=cols, rows=rows,
+            sql=sql.strip(), params=extra_params + [n],
+            evidence={"sql": ev_sql, "params_fixed": extra_params, "params_from": "name"},
         )
 
     def h_company_summary(self, q, raw) -> Optional[Answer]:
@@ -664,6 +696,108 @@ class Engine:
 
         return None
 
+    def _metric_block(self, where, params):
+        sql = f"""SELECT COUNT(*) sh, COALESCE(SUM(quantity),0) qty,
+                         COALESCE(SUM(value_usd),0) val,
+                         AVG(CASE WHEN unit_price>0 THEN unit_price END) ap,
+                         COUNT(DISTINCT buyer_key) b, COUNT(DISTINCT seller_key) s
+                  FROM {TABLE} WHERE {where}"""
+        return self._run(sql, params)[0]
+
+    def h_compare(self, q, raw) -> Optional[Answer]:
+        """Side-by-side comparison: 'compare August and September',
+        'buyer A vs buyer B', 'India vs China'. Shows each metric for both sides
+        plus the % change A->B."""
+        if not re.search(r"\b(compare|comparison|versus|vs\.?|against|difference between|better)\b", q):
+            return None
+
+        a = b = None  # (label, where, params)
+        # 1) two months
+        months = self._detect_month(q)
+        if len(months) >= 2:
+            a = (months[0], "year_month=?", [months[0]])
+            b = (months[1], "year_month=?", [months[1]])
+        else:
+            # 2) split the phrase on vs / and / against, resolve each side
+            parts = re.split(r"\b(?:vs\.?|versus|against|and|compared to)\b",
+                             raw, maxsplit=1, flags=re.I)
+            if len(parts) == 2:
+                la = re.sub(r"(?i)\b(compare|comparison|difference between|the|between)\b", " ", parts[0])
+                la = re.sub(r"[^\w &.-]", " ", la).strip()
+                lb = re.sub(r"[^\w &.-]", " ", parts[1]).strip()
+                ca, cb = self.idx.match_country(la), self.idx.match_country(lb)
+                if ca and cb:
+                    a = (ca, "(buyer_country=? OR seller_country=?)", [ca, ca])
+                    b = (cb, "(buyer_country=? OR seller_country=?)", [cb, cb])
+                else:
+                    sa, na = self.idx.find_any_company(la, strict=True)
+                    sb, nb = self.idx.find_any_company(lb, strict=True)
+                    if na and nb:
+                        a = (na, f"{'buyer' if sa=='buyer' else 'seller'}=?", [na])
+                        b = (nb, f"{'buyer' if sb=='buyer' else 'seller'}=?", [nb])
+        if not (a and b):
+            return None
+
+        A = self._metric_block(a[1], a[2])
+        B = self._metric_block(b[1], b[2])
+        metrics = [("Shipments", "sh", "int"), ("Total quantity", "qty", "qty"),
+                   ("Total value (USD)", "val", "usd"), ("Avg unit price", "ap", "usd4"),
+                   ("Unique buyers", "b", "int"), ("Unique suppliers", "s", "int")]
+        rows = []
+        for lbl, key, fmt in metrics:
+            va, vb = A[key], B[key]
+            chg = "—"
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)) and va:
+                chg = f"{(vb-va)/va*100:+.1f}%"
+            rows.append({"metric": lbl, "a": va, "b": vb, "chg": chg, "fmt": fmt})
+        cols = [("metric", "Metric"), ("a", str(a[0])), ("b", str(b[0])), ("chg", "Change")]
+        return Answer(ok=True, kind="table",
+                      title=f"Comparison: {a[0]}  vs  {b[0]}",
+                      note="Change = how the second compares to the first.",
+                      columns=cols, rows=rows,
+                      evidence={"sql": f"SELECT {EVID} FROM {TABLE} WHERE {a[1]} ORDER BY value_usd DESC",
+                                "params": a[2]})
+
+    def h_new_customers(self, q, raw) -> Optional[Answer]:
+        """Buyers/suppliers appearing for the FIRST time in a given month -- new
+        business leads. 'new buyers in October', 'first-time importers'."""
+        if not re.search(r"\bnew |newly|first[- ]?time|just started|started (?:buying|importing)|fresh (?:buyers|customers)", q):
+            return None
+        side = "seller" if re.search(r"supplier|seller|exporter|vendor", q) else "buyer"
+        col = "buyer" if side == "buyer" else "seller"
+        key = f"{col}_key"
+        months = self._detect_month(q)
+        target = months[-1] if months else self._run(
+            f"SELECT MAX(year_month) m FROM {TABLE}")[0]["m"]
+        sql = f"""
+            SELECT {col} AS name, {col}_country AS country,
+                   COUNT(*) AS shipments,
+                   COALESCE(SUM(quantity),0) AS qty,
+                   COALESCE(SUM(value_usd),0) AS value,
+                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price
+            FROM {TABLE}
+            WHERE year_month=? AND {key} IN (
+                SELECT {key} FROM {TABLE} WHERE {key} IS NOT NULL
+                GROUP BY {key} HAVING MIN(year_month)=?)
+            GROUP BY {key}
+            ORDER BY value DESC
+            LIMIT 50"""
+        rows = self._run(sql, (target, target))
+        who = "buyers" if side == "buyer" else "suppliers"
+        if not rows:
+            return Answer(ok=True, kind="list", title=f"New {who} in {target}",
+                          note=f"No first-time {who} found in {target}.",
+                          sql=sql.strip(), params=[target, target])
+        cols = [("name", "Buyer" if side == "buyer" else "Supplier"),
+                ("country", "Country"), ("shipments", "Shipments"),
+                ("qty", "Quantity"), ("value", "Value (USD)"), ("avg_price", "Avg rate")]
+        return Answer(ok=True, kind="table",
+                      title=f"New {who} in {target} (first appearance)",
+                      note="These entities have no shipment before this month in the file.",
+                      columns=cols, rows=rows, sql=sql.strip(), params=[target, target],
+                      evidence={"sql": f"SELECT {EVID} FROM {TABLE} WHERE year_month=? AND {col}=? ORDER BY date",
+                                "params_fixed": [target], "params_from": "name"})
+
     # ---- dimension vocabulary for the universal builder ----
     # (regex, (display_col, group_col, label, country_col_or_None))
     DIMENSIONS = [
@@ -805,43 +939,7 @@ class Engine:
             else:
                 return None
 
-        disp, group, label, country_col = dim
-        metric_sql, metric_label = _metric_col(q)
-        n = _extract_top_n(q, default=10)
-        where = [f"{group} IS NOT NULL"] + where
-        extra = f", {country_col} AS country" if country_col else ""
-        sql = f"""
-            SELECT {disp} AS name{extra},
-                   COUNT(*) AS shipments,
-                   COALESCE(SUM(quantity),0) AS qty,
-                   COALESCE(SUM(value_usd),0) AS value,
-                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price
-            FROM {TABLE}
-            WHERE {' AND '.join(where)}
-            GROUP BY {group}
-            ORDER BY {metric_sql} DESC
-            LIMIT ?"""
-        rows = self._run(sql, params + [n], limit=n)
-        if not rows:
-            return None
-        cols = [("name", label)]
-        if country_col:
-            cols.append(("country", "Country"))
-        cols += [("shipments", "Shipments"), ("qty", "Quantity"),
-                 ("value", "Value (USD)"), ("avg_price", "Avg rate")]
-        suffix = (" — " + ", ".join(fdesc)) if fdesc else ""
-        # evidence: the rows behind the whole filtered set
-        ev_where = " AND ".join(where[1:]) if len(where) > 1 else ""
-        ev_sql = f"SELECT {EVID} FROM {TABLE}" + (f" WHERE {ev_where}" if ev_where else "") + " ORDER BY quantity DESC"
-        return Answer(
-            ok=True, kind="table",
-            title=f"Top {n} {label.lower()}s by {metric_label.lower()}{suffix}",
-            note=("Grade/GSM are derived from product text (indicative)."
-                  if (self.idx.match_grade(raw) or _extract_gsm(q) or "grade" in label.lower()
-                      or "gsm" in label.lower()) else ""),
-            columns=cols, rows=rows, sql=sql.strip(), params=params + [n],
-            evidence={"sql": ev_sql, "params": params},
-        )
+        return self._build_ranking(dim, q, where, params, fdesc)
 
     # ---- utility: pull a company name out of a question ----
     def _guess_company(self, q, raw, strict=False):
@@ -868,9 +966,9 @@ class Engine:
     # Order matters: country-lane questions ("importers from <country>") must be
     # tried before the company resolver, so a country name is never mistaken for
     # a company that merely contains that word.
-    HANDLERS = ["h_aggregate", "h_top_entities", "h_lane_filter",
-                "h_who_trades_with", "h_cheapest_highest", "h_frequency",
-                "h_company_summary", "h_universal"]
+    HANDLERS = ["h_compare", "h_new_customers", "h_aggregate", "h_top_entities",
+                "h_lane_filter", "h_who_trades_with", "h_cheapest_highest",
+                "h_frequency", "h_company_summary", "h_universal"]
 
     def answer(self, question: str) -> Answer:
         raw = question.strip()

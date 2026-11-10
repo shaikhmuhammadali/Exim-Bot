@@ -88,7 +88,8 @@ def build_dashboard(db_path: str, top_n: int = 5) -> dict:
                    COUNT(*) AS shipments,
                    COALESCE(SUM(quantity),0) AS qty,
                    COALESCE(SUM(value_usd),0) AS value,
-                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price
+                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price,
+                   ROUND(100.0*COALESCE(SUM(quantity),0)/NULLIF(SUM(COALESCE(SUM(quantity),0)) OVER(),0),1) AS share
             FROM {TABLE}
             WHERE buyer_key IS NOT NULL
             GROUP BY buyer_key
@@ -96,11 +97,12 @@ def build_dashboard(db_path: str, top_n: int = 5) -> dict:
             LIMIT ?""", (top_n,))
         tiles.append({
             "id": "top_buyers", "title": f"Top {top_n} buyers",
-            "subtitle": "Ranked by quantity (value & avg rate shown)",
+            "subtitle": "Ranked by quantity — share = % of all quantity",
             "type": "ranktable",
             "columns": [("name", "Buyer"), ("country", "Country"),
                         ("shipments", "Shipments"), ("qty", "Quantity"),
-                        ("value", "Value (USD)"), ("avg_price", "Avg rate")],
+                        ("value", "Value (USD)"), ("avg_price", "Avg rate"),
+                        ("share", "Share %")],
             "rows": top_buyers,
             "evidence": {
                 "sql": f"SELECT {EVIDENCE_COLS} FROM {TABLE} WHERE buyer=? ORDER BY quantity DESC",
@@ -113,7 +115,8 @@ def build_dashboard(db_path: str, top_n: int = 5) -> dict:
                    COUNT(*) AS shipments,
                    COALESCE(SUM(quantity),0) AS qty,
                    COALESCE(SUM(value_usd),0) AS value,
-                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price
+                   AVG(CASE WHEN unit_price>0 THEN unit_price END) AS avg_price,
+                   ROUND(100.0*COALESCE(SUM(quantity),0)/NULLIF(SUM(COALESCE(SUM(quantity),0)) OVER(),0),1) AS share
             FROM {TABLE}
             WHERE seller_key IS NOT NULL
             GROUP BY seller_key
@@ -121,11 +124,12 @@ def build_dashboard(db_path: str, top_n: int = 5) -> dict:
             LIMIT ?""", (top_n,))
         tiles.append({
             "id": "top_suppliers", "title": f"Top {top_n} suppliers",
-            "subtitle": "Biggest sellers in the file",
+            "subtitle": "Biggest sellers — share = % of all quantity",
             "type": "ranktable",
             "columns": [("name", "Supplier"), ("country", "Country"),
                         ("shipments", "Shipments"), ("qty", "Quantity"),
-                        ("value", "Value (USD)"), ("avg_price", "Avg rate")],
+                        ("value", "Value (USD)"), ("avg_price", "Avg rate"),
+                        ("share", "Share %")],
             "rows": top_sellers,
             "evidence": {
                 "sql": f"SELECT {EVIDENCE_COLS} FROM {TABLE} WHERE seller=? ORDER BY quantity DESC",
