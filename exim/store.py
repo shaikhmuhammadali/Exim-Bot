@@ -88,12 +88,19 @@ def build_database(df: pd.DataFrame, db_path: str) -> dict:
         coldefs = ", ".join(f'"{c}" {SCHEMA[c]}' for c in cols)
         conn.execute(f'CREATE TABLE {TABLE} ({coldefs})')
 
-        # pandas NA -> None for sqlite
-        records = data.astype(object).where(pd.notna(data), None).values.tolist()
+        # Insert in chunks (pandas NA -> None), so we never materialise the whole
+        # table as one giant Python list -- keeps peak memory low on tiny
+        # (512MB) cloud instances.
         placeholders = ", ".join("?" for _ in cols)
-        conn.executemany(
-            f'INSERT INTO {TABLE} ({", ".join(chr(34)+c+chr(34) for c in cols)}) '
-            f'VALUES ({placeholders})', records)
+        insert_sql = (f'INSERT INTO {TABLE} ({", ".join(chr(34)+c+chr(34) for c in cols)}) '
+                      f'VALUES ({placeholders})')
+        n = len(data)
+        CHUNK = 5000
+        for start in range(0, n, CHUNK):
+            sub = data.iloc[start:start + CHUNK]
+            recs = sub.astype(object).where(pd.notna(sub), None).values.tolist()
+            conn.executemany(insert_sql, recs)
+            del recs, sub
 
         # helpful indexes for the common query shapes
         for c in ["buyer_key", "seller_key", "buyer_country", "seller_country",
