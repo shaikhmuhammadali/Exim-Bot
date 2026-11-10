@@ -19,10 +19,18 @@ a{color:var(--indigo)}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;
   padding:14px 22px;background:linear-gradient(100deg,var(--navy),var(--navy2));
   color:#fff;position:sticky;top:0;z-index:40;box-shadow:var(--shadow)}
-.brand{display:flex;align-items:center;gap:13px}
+.brand{display:flex;align-items:center;gap:13px;min-width:0}
+.brand-logo{height:30px;width:auto;display:block;flex:none}
+.brand-div{width:1px;height:30px;background:rgba(255,255,255,.22);display:inline-block;flex:none}
 .logo{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,var(--accent),#2bd4bd);
   display:grid;place-items:center;font-weight:800;font-size:16px;color:#042;letter-spacing:.5px;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.brand-title,.brand-sub{white-space:nowrap}
+/* keep the Hawa Pro logo at every width; drop the secondary text as space
+   tightens so nothing overlaps the header controls */
+@media(max-width:1300px){.brand-sub{display:none}}
+@media(max-width:1120px){.brand-text,.brand-div{display:none}}
+@media(max-width:680px){.brand-logo{height:27px}}
 .brand-title{font-size:17px;font-weight:700}
 .brand-sub{font-size:12px;opacity:.75;margin-top:1px}
 .topbar-right{display:flex;align-items:center;gap:12px}
