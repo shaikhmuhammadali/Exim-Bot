@@ -59,7 +59,11 @@ from functools import wraps
 from flask import Response as _Response
 
 AUTH_USER = os.environ.get("EXIM_USER", "hawa")
-AUTH_PASSWORD = os.environ.get("EXIM_PASSWORD", "")
+# Login is OFF by default. To password-protect the site, set BOTH
+# EXIM_LOGIN=1 and EXIM_PASSWORD in the environment. (A stray EXIM_PASSWORD
+# alone will NOT lock the site, which avoids accidental lock-outs.)
+_LOGIN_ON = os.environ.get("EXIM_LOGIN", "").strip().lower() in ("1", "true", "yes", "on")
+AUTH_PASSWORD = os.environ.get("EXIM_PASSWORD", "") if _LOGIN_ON else ""
 
 
 def _auth_ok(auth) -> bool:
