@@ -48,6 +48,42 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
 
 
 # --------------------------------------------------------------------------- #
+#  Access control (for public / cloud hosting)
+#  If EXIM_PASSWORD is set, every page and API requires HTTP Basic auth, so a
+#  public URL doesn't expose the trade data to the whole internet. Locally
+#  (no password set) it stays open for convenience.
+# --------------------------------------------------------------------------- #
+
+import hmac
+from functools import wraps
+from flask import Response as _Response
+
+AUTH_USER = os.environ.get("EXIM_USER", "hawa")
+AUTH_PASSWORD = os.environ.get("EXIM_PASSWORD", "")
+
+
+def _auth_ok(auth) -> bool:
+    if not auth:
+        return False
+    return (hmac.compare_digest(auth.username or "", AUTH_USER)
+            and hmac.compare_digest(auth.password or "", AUTH_PASSWORD))
+
+
+@app.before_request
+def _require_login():
+    if not AUTH_PASSWORD:          # no password configured -> open (local use)
+        return None
+    if request.path == "/api/health":
+        return None
+    auth = request.authorization
+    if not _auth_ok(auth):
+        return _Response(
+            "Authentication required.", 401,
+            {"WWW-Authenticate": 'Basic realm="EXIM Insight Bot - H.G. Hawa & Co."'})
+    return None
+
+
+# --------------------------------------------------------------------------- #
 #  In-process dataset registry (one active dataset; keeps a small history so
 #  Phase-2 multi-period work can grow here without re-architecting).
 # --------------------------------------------------------------------------- #

@@ -1,0 +1,21 @@
+# One-click cloud deploy for Render (https://render.com)
+# In Render: New + -> Blueprint -> connect this GitHub repo -> it reads this file.
+# IMPORTANT: set the EXIM_PASSWORD value in the dashboard (it is a secret, not
+# stored in the repo). Then open the service URL and log in with user "hawa".
+services:
+  - type: web
+    name: exim-insight-bot
+    runtime: python
+    plan: free                 # free sleeps after 15 min idle; use "starter" for true 24x7
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT
+    autoDeploy: true           # redeploys whenever you push to GitHub
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      - key: EXIM_AUTO          # no Downloads folder in the cloud -> upload via the page
+        value: "0"
+      - key: EXIM_USER
+        value: "hawa"
+      - key: EXIM_PASSWORD      # <-- set this secret in the Render dashboard
+        sync: false

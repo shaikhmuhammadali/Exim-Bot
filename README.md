@@ -115,4 +115,39 @@ EXIM_Insight_Bot/
 ```
 
 ---
+
+## Host it online 24/7 (optional)
+Run the bot as a private website so you can open it from **any device, even when
+your PC is off**. It becomes **password-protected** (your trade data is not left
+public). The code is already prepared (`Procfile`, `render.yaml`, gunicorn).
+
+**Deploy on Render (free to start):**
+1. Push this folder to a GitHub repo (already done: `shaikhmuhammadali/Exim-Bot`).
+2. Go to **https://render.com**, sign up (free), then **New + → Blueprint**.
+3. **Connect the GitHub repo.** Render reads `render.yaml` automatically.
+4. When asked, set the secret **`EXIM_PASSWORD`** to a password of your choice.
+5. Click **Create / Deploy**. In ~2–3 minutes you get a URL like
+   `https://exim-insight-bot.onrender.com`.
+6. Open it → the browser asks to log in → user **`hawa`**, password = what you set.
+
+**Loading data in the cloud:** there is no Downloads folder on the server, so you
+**upload the EXIM report on the page** (the upload box). It processes and you ask
+questions as usual.
+
+**Notes / limits of the free plan:**
+- The free plan **sleeps after 15 min idle** (first open after that takes ~1 min
+  to wake). For always-instant 24×7, switch the service to Render's paid
+  **Starter** plan (about **$7/month**).
+- Free plans have **temporary storage** — an uploaded report is cleared if the
+  service restarts, so you re-upload after a restart. Add a Render **Disk** (paid)
+  to keep it permanently.
+- Config via environment variables: `EXIM_PASSWORD` (required for the lock),
+  `EXIM_USER` (login name, default `hawa`), `EXIM_AUTO=0` (folder-watch off in
+  the cloud).
+
+> Prefer to keep everything on your own PC (private, free, auto-loads from
+> Downloads)? Just use `run.bat` / the desktop launcher and the local URL
+> `http://127.0.0.1:5057` — no hosting needed.
+
+---
 *Confidential — H.G. Hawa & Co. The data lives in the bot's head; you simply ask.*

@@ -6,5 +6,7 @@ openpyxl>=3.1
 numpy>=1.24
 # Reading legacy .xls files:
 xlrd>=2.0
+# Production WSGI server (used for cloud / 24x7 hosting):
+gunicorn>=21.0
 # Optional -- only needed to enable the free-form (Claude-backed) Q&A fallback:
 # anthropic>=0.39
